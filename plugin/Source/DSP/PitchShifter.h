@@ -1,12 +1,15 @@
 #pragma once
 
+#include <JuceHeader.h>
 #include <vector>
 #include <complex>
+#include "TransientDetector.h"
+#include "LPCAnalyzer.h"
 
 namespace blink {
 
 /**
- * Professional Phase Vocoder with proper overlap-add synthesis.
+ * Professional Phase Vocoder with JUCE FFT and dynamic sample rate support.
  * Implements SMB-style pitch shifting with formant preservation.
  * Supports independent control of pitch and spectral envelope (formants).
  */
@@ -14,6 +17,12 @@ class PitchShifter {
 public:
     PitchShifter(int fftSize, int hopSize);
     ~PitchShifter() = default;
+
+    /**
+     * Set the sample rate for accurate frequency calculations.
+     * Call this in prepareToPlay() when sample rate changes.
+     */
+    void setSampleRate(double newSampleRate);
 
     /**
      * Processes audio with overlap-add.
@@ -28,6 +37,12 @@ private:
     int fftSize;
     int hopSize;
     int osamp; // Oversampling factor
+    double sampleRate;
+    float freqPerBin;
+    
+    // JUCE FFT
+    std::unique_ptr<juce::dsp::FFT> fft;
+    int fftOrder;
     
     // Window and FFT buffers
     std::vector<float> window;
@@ -35,9 +50,8 @@ private:
     std::vector<float> lastPhase;
     std::vector<float> sumPhase;
 
-    // FFT processing buffers
-    std::vector<float> fftReal;
-    std::vector<float> fftImag;
+    // FFT processing buffers (interleaved real/imag for JUCE FFT)
+    std::vector<float> fftData;
     std::vector<float> magnitude;
     std::vector<float> phase;
     std::vector<float> instFreq;
@@ -60,8 +74,18 @@ private:
     // Spectral envelope for formant preservation
     void shiftFormants(std::vector<std::complex<float>>& spectrum, float ratio);
     
-    // FFT helper (Cooley-Tukey implementation)
-    void performFFT(float* real, float* imag, int n, bool forward);
+    // Helper: Calculate FFT order from size
+    int calculateFFTOrder(int size);
+    
+    // Transient detection
+    TransientDetector transientDetector;
+    bool bypassPitchShiftOnTransient;
+    
+    // LPC formant analysis
+    LPCAnalyzer lpcAnalyzer;
+    std::vector<float> lpcEnvelope;
+    std::vector<float> warpedLPCEnvelope;
+    bool useLPCFormants;
 };
 
 } // namespace blink

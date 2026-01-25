@@ -36,6 +36,16 @@ target_sources(VocalSuitePro
     Source/DSP/PitchDetector.cpp
     Source/DSP/PitchDetector.h
     Source/DSP/PitchShifter.cpp
+    Source/DSP/TransientDetector.cpp
+    Source/DSP/TransientDetector.h
+    Source/DSP/LPCAnalyzer.cpp
+    Source/DSP/LPCAnalyzer.h
+    Source/DSP/F0Extractor.cpp
+    Source/DSP/F0Extractor.h
+    Source/DSP/MelSpectrogram.cpp
+    Source/DSP/MelSpectrogram.h
+    Source/DSP/OfflineVoiceProcessor.cpp
+    Source/DSP/OfflineVoiceProcessor.h
     Source/DSP/PitchShifter.h
     Source/DSP/PitchCorrector.cpp
     Source/DSP/PitchCorrector.h

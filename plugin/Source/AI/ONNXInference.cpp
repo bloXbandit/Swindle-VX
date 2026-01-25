@@ -4,18 +4,29 @@
 
 // NOTE: To compile this, you need to:
 // 1. Download ONNX Runtime from https://github.com/microsoft/onnxruntime/releases
-// 2. Add to CMakeLists.txt:
-//    include_directories(/path/to/onnxruntime/include)
-//    target_link_libraries(VocalSuitePro PRIVATE /path/to/onnxruntime/lib/libonnxruntime.dylib)
-// 3. Uncomment the #include below:
+//    Recommended: onnxruntime-osx-arm64-1.17.0.tgz (for Apple Silicon)
+//    or: onnxruntime-osx-x86_64-1.17.0.tgz (for Intel Mac)
+// 2. Extract to ~/onnxruntime/
+// 3. Update CMakeLists.txt:
+//    include_directories(~/onnxruntime/include)
+//    target_link_libraries(VocalSuitePro PRIVATE ~/onnxruntime/lib/libonnxruntime.dylib)
+//    target_compile_definitions(VocalSuitePro PRIVATE ONNX_RUNTIME_AVAILABLE=1)
+// 4. Uncomment the #include below:
 
-// #include <onnxruntime/core/session/onnxruntime_cxx_api.h>
+#ifdef ONNX_RUNTIME_AVAILABLE
+#include <onnxruntime/core/session/onnxruntime_cxx_api.h>
+#endif
 
 namespace blink {
 
-ONNXInference::ONNXInference() : session(nullptr), env(nullptr), isModelLoaded(false) {
+ONNXInference::ONNXInference() 
+    : session(nullptr), env(nullptr), isModelLoaded(false), expectedMelBands(80) {
     #ifdef ONNX_RUNTIME_AVAILABLE
     env = new Ort::Env(ORT_LOGGING_LEVEL_WARNING, "VocalSuiteAI");
+    std::cout << "ONNX Runtime initialized" << std::endl;
+    #else
+    std::cout << "ONNX Runtime not available - AI voice cloning disabled" << std::endl;
+    std::cout << "To enable: Download ONNX Runtime and update CMakeLists.txt" << std::endl;
     #endif
 }
 
@@ -35,10 +46,11 @@ bool ONNXInference::loadModel(const std::string& modelPath) {
             std::cerr << "Model file not found: " << modelPath << std::endl;
             return false;
         }
+        file.close();
         
         // Configure session options
         Ort::SessionOptions sessionOptions;
-        sessionOptions.SetIntraOpNumThreads(2); // Use 2 threads for inference
+        sessionOptions.SetIntraOpNumThreads(4); // Use 4 threads for inference
         sessionOptions.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
         
         // Enable CPU optimizations
@@ -56,6 +68,7 @@ bool ONNXInference::loadModel(const std::string& modelPath) {
         for (size_t i = 0; i < numInputNodes; i++) {
             auto inputName = session->GetInputNameAllocated(i, allocator);
             inputNames.push_back(inputName.get());
+            std::cout << "Input " << i << ": " << inputName.get() << std::endl;
         }
         
         // Output info
@@ -64,9 +77,12 @@ bool ONNXInference::loadModel(const std::string& modelPath) {
         for (size_t i = 0; i < numOutputNodes; i++) {
             auto outputName = session->GetOutputNameAllocated(i, allocator);
             outputNames.push_back(outputName.get());
+            std::cout << "Output " << i << ": " << outputName.get() << std::endl;
         }
         
+        this->modelPath = modelPath;
         isModelLoaded = true;
+        
         std::cout << "AI Model loaded successfully: " << modelPath << std::endl;
         std::cout << "Inputs: " << numInputNodes << ", Outputs: " << numOutputNodes << std::endl;
         
@@ -78,102 +94,102 @@ bool ONNXInference::loadModel(const std::string& modelPath) {
         return false;
     }
     #else
-    std::cerr << "ONNX Runtime not available. Compile with ONNX_RUNTIME_AVAILABLE defined." << std::endl;
+    std::cerr << "ONNX Runtime not available - cannot load model" << std::endl;
     return false;
     #endif
 }
 
-void ONNXInference::process(const float* input, float* output, int numSamples) {
+int ONNXInference::processOffline(const float* f0, const float* melSpec,
+                                  int numFrames, int numMelBands,
+                                  float* output, int outputSize) {
     #ifdef ONNX_RUNTIME_AVAILABLE
-    if (!session || !isModelLoaded) {
-        // Fallback: Copy input to output if no model loaded
-        for (int i = 0; i < numSamples; i++) {
-            output[i] = input[i];
-        }
-        return;
+    if (!isModelLoaded) {
+        std::cerr << "No model loaded" << std::endl;
+        // Pass through unchanged
+        return 0;
     }
-
+    
     try {
-        // 1. FEATURE EXTRACTION
-        // For RVC models, typical input is:
-        // - F0 (fundamental frequency) curve
-        // - Spectral features (mel-spectrogram or similar)
-        // - Speaker embedding (if multi-speaker model)
+        // Create ONNX tensors
+        Ort::MemoryInfo memoryInfo = Ort::MemoryInfo::CreateCpu(
+            OrtAllocatorType::OrtArenaAllocator, OrtMemType::OrtMemTypeDefault);
         
-        // Simplified: We'll assume the model expects raw audio
-        // Real RVC models need proper feature extraction
+        // Input 1: F0 curve (shape: [1, numFrames])
+        std::vector<int64_t> f0Shape = {1, numFrames};
+        Ort::Value f0Tensor = Ort::Value::CreateTensor<float>(
+            memoryInfo, const_cast<float*>(f0), numFrames, f0Shape.data(), f0Shape.size());
         
-        // 2. PREPARE INPUT TENSOR
-        auto memoryInfo = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
+        // Input 2: Mel-spectrogram (shape: [1, numMelBands, numFrames])
+        std::vector<int64_t> melShape = {1, numMelBands, numFrames};
+        Ort::Value melTensor = Ort::Value::CreateTensor<float>(
+            memoryInfo, const_cast<float*>(melSpec), numFrames * numMelBands,
+            melShape.data(), melShape.size());
         
-        std::vector<int64_t> inputShape = {1, numSamples}; // Batch size 1, numSamples length
-        std::vector<float> inputData(input, input + numSamples);
+        // Prepare inputs
+        std::vector<Ort::Value> inputTensors;
+        inputTensors.push_back(std::move(f0Tensor));
+        inputTensors.push_back(std::move(melTensor));
         
-        Ort::Value inputTensor = Ort::Value::CreateTensor<float>(
-            memoryInfo, 
-            inputData.data(), 
-            inputData.size(),
-            inputShape.data(), 
-            inputShape.size()
-        );
-        
-        // 3. RUN INFERENCE
-        std::vector<const char*> inputNamesPtr;
+        // Prepare input/output names
+        std::vector<const char*> inputNamesCStr;
         for (const auto& name : inputNames) {
-            inputNamesPtr.push_back(name.c_str());
+            inputNamesCStr.push_back(name.c_str());
         }
         
-        std::vector<const char*> outputNamesPtr;
+        std::vector<const char*> outputNamesCStr;
         for (const auto& name : outputNames) {
-            outputNamesPtr.push_back(name.c_str());
+            outputNamesCStr.push_back(name.c_str());
         }
         
+        // Run inference
         auto outputTensors = session->Run(
             Ort::RunOptions{nullptr},
-            inputNamesPtr.data(),
-            &inputTensor,
-            1,
-            outputNamesPtr.data(),
-            outputNames.size()
+            inputNamesCStr.data(), inputTensors.data(), inputTensors.size(),
+            outputNamesCStr.data(), outputNamesCStr.size()
         );
         
-        // 4. EXTRACT OUTPUT
+        // Extract output audio
         float* outputData = outputTensors[0].GetTensorMutableData<float>();
         auto outputShape = outputTensors[0].GetTensorTypeAndShapeInfo().GetShape();
         
-        int outputSize = 1;
+        int numOutputSamples = 1;
         for (auto dim : outputShape) {
-            outputSize *= dim;
+            numOutputSamples *= (int)dim;
         }
         
         // Copy to output buffer
-        int copySize = std::min(numSamples, outputSize);
-        for (int i = 0; i < copySize; i++) {
-            output[i] = outputData[i];
-        }
+        int samplesToCopy = std::min(numOutputSamples, outputSize);
+        std::copy(outputData, outputData + samplesToCopy, output);
         
-        // Pad with zeros if output is shorter
-        for (int i = copySize; i < numSamples; i++) {
-            output[i] = 0.0f;
-        }
+        std::cout << "AI inference complete: " << samplesToCopy << " samples generated" << std::endl;
+        
+        return samplesToCopy;
         
     } catch (const Ort::Exception& e) {
         std::cerr << "ONNX inference error: " << e.what() << std::endl;
-        // Fallback to passthrough
-        for (int i = 0; i < numSamples; i++) {
-            output[i] = input[i];
-        }
+        return 0;
     }
     #else
-    // No ONNX Runtime - passthrough
-    for (int i = 0; i < numSamples; i++) {
-        output[i] = input[i];
-    }
+    // ONNX not available - pass through unchanged
+    std::cerr << "ONNX Runtime not available" << std::endl;
+    return 0;
     #endif
 }
 
 bool ONNXInference::isLoaded() const {
     return isModelLoaded;
+}
+
+std::string ONNXInference::getModelInfo() const {
+    if (!isModelLoaded) {
+        return "No model loaded";
+    }
+    
+    std::string info = "Model: " + modelPath + "\n";
+    info += "Inputs: " + std::to_string(inputNames.size()) + "\n";
+    info += "Outputs: " + std::to_string(outputNames.size()) + "\n";
+    
+    return info;
 }
 
 } // namespace blink
