@@ -1,10 +1,12 @@
 #include "PitchShifter.h"
 #include <cmath>
 #include <algorithm>
+#include <cstring>
 
 namespace blink {
 
-PitchShifter::PitchShifter(int size, int hop) : fftSize(size), hopSize(hop) {
+PitchShifter::PitchShifter(int size, int hop) : fftSize(size), hopSize(hop), osamp(size/hop) {
+    // Initialize buffers
     window.resize(fftSize);
     fftBuffer.resize(fftSize);
     lastPhase.resize(fftSize / 2 + 1, 0.0f);
@@ -19,24 +21,76 @@ PitchShifter::PitchShifter(int size, int hop) : fftSize(size), hopSize(hop) {
     newPhase.resize(fftSize / 2 + 1);
     envelope.resize(fftSize / 2 + 1);
     warpedEnvelope.resize(fftSize / 2 + 1);
+    
+    // Circular buffers for overlap-add
+    inFIFO.resize(fftSize, 0.0f);
+    outFIFO.resize(fftSize, 0.0f);
+    outputAccum.resize(fftSize * 2, 0.0f);
+    
+    inFIFOIndex = 0;
+    outFIFOIndex = 0;
 
-    // Hann Window
+    // Hann Window with proper normalization
     for (int i = 0; i < fftSize; i++) {
         window[i] = 0.5f * (1.0f - cosf(2.0f * M_PI * i / (fftSize - 1)));
     }
+    
+    // Calculate window normalization factor for overlap-add
+    windowNorm = 0.0f;
+    for (int i = 0; i < fftSize; i += hopSize) {
+        windowNorm += window[i % fftSize] * window[i % fftSize];
+    }
+    windowNorm = 1.0f / (windowNorm + 0.0001f);
 }
 
 void PitchShifter::process(const float* input, float* output, float pitchRatio, float formantRatio) {
+    // Process each sample through the pitch shifter with proper overlap-add
+    for (int i = 0; i < hopSize; i++) {
+        // Fill input FIFO
+        inFIFO[inFIFOIndex] = input[i];
+        
+        // Output from FIFO
+        output[i] = outFIFO[outFIFOIndex];
+        outFIFO[outFIFOIndex] = 0.0f;
+        
+        inFIFOIndex++;
+        outFIFOIndex++;
+        
+        // Process when we have enough samples
+        if (inFIFOIndex >= fftSize) {
+            inFIFOIndex = 0;
+            
+            // Process one frame
+            processFrame(inFIFO.data(), pitchRatio, formantRatio);
+            
+            // Overlap-add to output accumulator
+            for (int k = 0; k < fftSize; k++) {
+                outputAccum[k] += fftBuffer[k];
+            }
+            
+            // Copy to output FIFO
+            std::copy(outputAccum.begin(), outputAccum.begin() + hopSize, outFIFO.begin());
+            
+            // Shift accumulator
+            std::copy(outputAccum.begin() + hopSize, outputAccum.end(), outputAccum.begin());
+            std::fill(outputAccum.end() - hopSize, outputAccum.end(), 0.0f);
+            
+            outFIFOIndex = 0;
+        }
+    }
+}
+
+void PitchShifter::processFrame(const float* frame, float pitchRatio, float formantRatio) {
     std::fill(newMagnitude.begin(), newMagnitude.end(), 0.0f);
     std::fill(newPhase.begin(), newPhase.end(), 0.0f);
     
     // 1. ANALYSIS: Apply window and prepare for FFT
     for (int i = 0; i < fftSize; i++) {
-        fftReal[i] = input[i] * window[i];
+        fftReal[i] = frame[i] * window[i];
         fftImag[i] = 0.0f;
     }
     
-    // 2. Forward FFT (using simple DFT for demonstration - replace with juce::dsp::FFT in production)
+    // 2. Forward FFT
     performFFT(fftReal.data(), fftImag.data(), fftSize, true);
     
     // 3. Convert to magnitude and phase
@@ -45,7 +99,8 @@ void PitchShifter::process(const float* input, float* output, float pitchRatio, 
         phase[k] = atan2f(fftImag[k], fftReal[k]);
     }
     
-    // 4. PHASE VOCODER: Calculate instantaneous frequency
+    // 4. PHASE VOCODER: Calculate instantaneous frequency (SMB algorithm)
+    float freqPerBin = 44100.0f / fftSize; // Assuming 44.1kHz sample rate
     float expectedPhaseAdvance = 2.0f * M_PI * hopSize / fftSize;
     
     for (int k = 0; k <= fftSize / 2; k++) {
@@ -57,27 +112,35 @@ void PitchShifter::process(const float* input, float* output, float pitchRatio, 
         while (phaseDiff > M_PI) phaseDiff -= 2.0f * M_PI;
         while (phaseDiff < -M_PI) phaseDiff += 2.0f * M_PI;
         
-        // Calculate instantaneous frequency
-        float binFreq = k * expectedPhaseAdvance;
-        instFreq[k] = binFreq + phaseDiff;
+        // Calculate true frequency (instantaneous frequency)
+        float trueFreq = k * freqPerBin + (phaseDiff / expectedPhaseAdvance) * freqPerBin * hopSize / (2.0f * M_PI);
+        instFreq[k] = trueFreq;
     }
     
-    // 5. PITCH SHIFTING: Remap frequencies
+    // 5. PITCH SHIFTING: Remap frequencies with interpolation
     for (int k = 0; k <= fftSize / 2; k++) {
-        int newBin = (int)(k * pitchRatio);
-        if (newBin <= fftSize / 2) {
-            newMagnitude[newBin] += magnitude[k];
+        float newFreq = instFreq[k] * pitchRatio;
+        int newBin = (int)(newFreq / freqPerBin);
+        
+        if (newBin >= 0 && newBin <= fftSize / 2) {
+            // Linear interpolation for smoother results
+            float frac = (newFreq / freqPerBin) - newBin;
             
-            // Accumulate phase
-            sumPhase[newBin] += instFreq[k] * pitchRatio;
+            newMagnitude[newBin] += magnitude[k] * (1.0f - frac);
+            if (newBin + 1 <= fftSize / 2) {
+                newMagnitude[newBin + 1] += magnitude[k] * frac;
+            }
+            
+            // Phase accumulation
+            sumPhase[newBin] += (phase[k] - lastPhase[k]) * pitchRatio;
             newPhase[newBin] = sumPhase[newBin];
         }
     }
     
-    // 6. FORMANT PRESERVATION (if needed)
+    // 6. FORMANT PRESERVATION
     if (std::abs(formantRatio - 1.0f) > 0.01f) {
-        // Extract spectral envelope (simplified - use LPC or cepstral analysis for better results)
-        int smoothWindow = 20; // Smoothing window for envelope
+        // Extract spectral envelope using moving average
+        int smoothWindow = std::max(5, fftSize / 100);
         
         for (int k = 0; k <= fftSize / 2; k++) {
             float sum = 0.0f;
@@ -92,16 +155,24 @@ void PitchShifter::process(const float* input, float* output, float pitchRatio, 
         // Warp the envelope
         std::fill(warpedEnvelope.begin(), warpedEnvelope.end(), 0.0f);
         for (int k = 0; k <= fftSize / 2; k++) {
-            int sourceK = (int)(k / formantRatio);
-            if (sourceK <= fftSize / 2) {
-                warpedEnvelope[k] = envelope[sourceK];
+            float sourceK = k / formantRatio;
+            int k1 = (int)sourceK;
+            int k2 = k1 + 1;
+            float frac = sourceK - k1;
+            
+            if (k1 >= 0 && k1 <= fftSize / 2) {
+                warpedEnvelope[k] = envelope[k1] * (1.0f - frac);
+            }
+            if (k2 >= 0 && k2 <= fftSize / 2) {
+                warpedEnvelope[k] += envelope[k2] * frac;
             }
         }
         
         // Apply warped envelope to magnitude
         for (int k = 0; k <= fftSize / 2; k++) {
-            if (envelope[k] > 0.0001f) {
-                newMagnitude[k] *= warpedEnvelope[k] / (envelope[k] + 0.0001f);
+            float origEnv = envelope[(int)(k * pitchRatio)];
+            if (origEnv > 0.0001f && warpedEnvelope[k] > 0.0001f) {
+                newMagnitude[k] *= warpedEnvelope[k] / origEnv;
             }
         }
     }
@@ -121,18 +192,17 @@ void PitchShifter::process(const float* input, float* output, float pitchRatio, 
     // 8. SYNTHESIS: Inverse FFT
     performFFT(fftReal.data(), fftImag.data(), fftSize, false);
     
-    // 9. Apply window and output
+    // 9. Apply window and normalize
     for (int i = 0; i < fftSize; i++) {
-        output[i] = fftReal[i] * window[i] / fftSize;
+        fftBuffer[i] = fftReal[i] * window[i] * windowNorm / fftSize;
     }
 }
 
 void PitchShifter::shiftFormants(std::vector<std::complex<float>>& spectrum, float ratio) {
-    // This is now integrated into the main process() function above
-    // Kept for compatibility
+    // Integrated into processFrame - kept for compatibility
 }
 
-// Simple DFT implementation (replace with juce::dsp::FFT for production)
+// Cooley-Tukey FFT implementation
 void PitchShifter::performFFT(float* real, float* imag, int n, bool forward) {
     // Bit-reversal permutation
     int j = 0;
