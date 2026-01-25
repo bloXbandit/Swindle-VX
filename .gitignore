@@ -1,0 +1,54 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# C++ Build artifacts
+plugin/build/
+plugin/Builds/
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dylib
+*.dll
+*.exe
+
+# JUCE generated files
+plugin/JuceLibraryCode/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Plugin binaries (don't commit built plugins)
+*.vst3
+*.component
+*.au

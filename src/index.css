@@ -1,0 +1,157 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,100..1000;1,9..40,100..1000&family=Lora:ital,wght@0,400..700;1,400..700&family=IBM+Plex+Mono:ital,wght@0,100..700;1,100..700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* ⚠️ AGENT MUST REPLACE: These are placeholder colors. You MUST define a custom palette before writing components. */
+    /* The template uses distinctive placeholder colors to force customization - do NOT use these in production! */
+    
+    /* 
+     * EXAMPLE PALETTES (use as inspiration, replace with your own):
+     * 
+     * Modern SaaS (Business/Enterprise):
+     * --primary: 217 91% 60%;        (Blue #2563EB)
+     * --accent: 217 91% 65%;         (Lighter blue #3B82F6)
+     * 
+     * Bold Tech (Startups/Developer Tools):
+     * --primary: 262 83% 58%;        (Purple #8B5CF6)
+     * --accent: 262 83% 68%;         (Lighter purple #A855F7)
+     * 
+     * Quantum Rose (Creative/Design):
+     * --primary: 330 81% 50%;        (Pink #E6067A)
+     * --accent: 330 81% 70%;         (Lighter pink #F472B6)
+     * 
+     * Ocean Depth (Calm/Professional):
+     * --primary: 200 98% 39%;        (Deep teal #0D9488)
+     * --accent: 200 98% 50%;         (Teal #14B8A6)
+     * 
+     * Sunset Warmth (Friendly/Welcoming):
+     * --primary: 24 95% 53%;         (Orange #F97316)
+     * --accent: 24 95% 63%;          (Lighter orange #FB923C)
+     */
+    
+    /* Colors - Custom Swindl VX Palette (Cyber-Industrial) */
+    --background: 240 10% 2%;
+    --foreground: 0 0% 98%;
+    --card: 240 10% 4%;
+    --card-foreground: 0 0% 98%;
+    --popover: 240 10% 2%;
+    --popover-foreground: 0 0% 98%;
+    --primary: 0 0% 98%;
+    --primary-foreground: 240 5.9% 10%;
+    --secondary: 240 3.7% 12%;
+    --secondary-foreground: 0 0% 98%;
+    --muted: 240 3.7% 12%;
+    --muted-foreground: 240 5% 50%;
+    --accent: 180 100% 50%; /* Digital Cyan */
+    --accent-glow: 180 100% 60%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 240 3.7% 15%;
+    --input: 240 3.7% 15%;
+    --ring: 180 100% 50%;
+
+    /* Gradients & Textures */
+    --gradient-metal: linear-gradient(180deg, #27272a 0%, #18181b 100%);
+    --gradient-screen: linear-gradient(180deg, rgba(0,0,0,0.8) 0%, rgba(20,20,20,0.9) 100%);
+    --texture-noise: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+
+    /* Fonts */
+    --font-sans: 'Geist', sans-serif;
+    --font-mono: 'Geist Mono', monospace;
+
+    /* Shadows */
+    --shadow-pro: 0 10px 40px -10px rgba(0, 0, 0, 0.5), 0 0 20px rgba(0, 0, 0, 0.3);
+    --shadow-glow: 0 0 30px hsl(var(--accent) / 0.3);
+
+    /* Radius */
+    --radius: 0.75rem;
+  }
+
+  .dark {
+    /* Same as root for this project */
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    background-image: var(--texture-noise);
+    background-repeat: repeat;
+    background-size: 150px 150px;
+    background-blend-mode: overlay;
+  }
+}
+
+/* Custom Plugin Styles */
+.plugin-container {
+  @apply relative rounded-2xl overflow-hidden border border-white/10;
+  box-shadow: var(--shadow-pro);
+  background: var(--gradient-metal);
+}
+
+.plugin-container::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: var(--texture-noise);
+  opacity: 0.03;
+  pointer-events: none;
+}
+
+.module-box {
+  @apply bg-black/40 border border-white/5 rounded-xl p-5 backdrop-blur-sm transition-all duration-500;
+  box-shadow: inset 0 1px 1px rgba(255,255,255,0.05);
+}
+
+.module-box:hover {
+  @apply border-accent/20 bg-black/50;
+  box-shadow: inset 0 1px 1px rgba(255,255,255,0.1), 0 10px 30px -15px rgba(0,0,0,0.5);
+}
+
+.knob-label {
+  @apply text-[9px] uppercase tracking-[0.2em] text-muted-foreground font-black mb-2 block text-center;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.5);
+}
+
+.visualizer-screen {
+  @apply bg-black/60 rounded-xl border border-white/10 overflow-hidden relative;
+  background-image: radial-gradient(circle at center, #1a1a1a 0%, #050505 100%);
+  box-shadow: inset 0 2px 10px rgba(0,0,0,0.8), 0 1px 1px rgba(255,255,255,0.05);
+}
+
+.accent-glow {
+  text-shadow: 0 0 15px hsl(var(--accent) / 0.6);
+}
+
+.button-pro {
+  @apply bg-white/5 border border-white/10 text-[10px] font-black uppercase tracking-widest transition-all duration-200;
+}
+
+.button-pro:hover {
+  @apply bg-white/10;
+}
+
+.button-pro:active {
+  @apply scale-[0.98] bg-white/20;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-white/10 rounded-full hover:bg-white/20;
+}
