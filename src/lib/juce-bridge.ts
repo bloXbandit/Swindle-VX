@@ -23,6 +23,33 @@ class JUCEBridge {
     }
   }
 
+  convertAudio(model: string, pitchShift: number, formantShift: number) {
+    if (typeof window !== 'undefined' && (window as any).__JUCE__) {
+      (window as any).__JUCE__.backend.emitEvent('convertAudio', { 
+        type: 'convertAudio',
+        model,
+        pitchShift,
+        formantShift
+      });
+    }
+  }
+
+  startCapture() {
+    if (typeof window !== 'undefined' && (window as any).__JUCE__) {
+      (window as any).__JUCE__.backend.emitEvent('startCapture', {
+        type: 'startCapture'
+      });
+    }
+  }
+
+  stopCapture() {
+    if (typeof window !== 'undefined' && (window as any).__JUCE__) {
+      (window as any).__JUCE__.backend.emitEvent('stopCapture', {
+        type: 'stopCapture'
+      });
+    }
+  }
+
   onParameterChange(callback: ParameterChangeCallback) {
     this.listeners.add(callback);
     return () => this.listeners.delete(callback);

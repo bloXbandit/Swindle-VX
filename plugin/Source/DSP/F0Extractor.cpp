@@ -5,7 +5,7 @@
 namespace blink {
 
 F0Extractor::F0Extractor(int hopSize)
-    : pitchDetector(2048), hopSize(hopSize), sampleRate(44100.0),
+    : pitchDetector(44100.0, 2048), hopSize(hopSize), sampleRate(44100.0),
       prevF0(0.0f), smoothingFactor(0.3f) {
 }
 
@@ -15,7 +15,7 @@ void F0Extractor::setSampleRate(double sampleRate) {
 
 float F0Extractor::processSample(const float* buffer, int numSamples) {
     // Detect pitch using YIN
-    float frequency = pitchDetector.detectPitch(buffer, numSamples, (float)sampleRate);
+    float frequency = pitchDetector.getPitch(buffer, numSamples);
     
     // Smooth F0 to avoid jitter
     if (frequency > 0.0f) {

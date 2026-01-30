@@ -40,7 +40,7 @@ export class AudioEngine {
   private isStarted = false;
 
   private notes = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
-  private isExternalPlugin = false;
+  public isExternalPlugin = false;
 
   // Recording for Cloning
   private mediaRecorder: MediaRecorder | null = null;

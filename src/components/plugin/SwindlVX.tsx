@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Power, Save, FolderOpen, Settings, Info, Import, Mic, MicOff, Globe, Sparkles, UserCircle } from 'lucide-react';
+import { Power, Save, FolderOpen, Settings, Info, Import, Mic, MicOff, Globe, Sparkles, UserCircle, FileAudio } from 'lucide-react';
 import { Knob } from './Knob';
 import { Button } from '../ui/button';
 import {
@@ -67,6 +67,7 @@ export const SwindlVX: React.FC = () => {
   const [isCloning, setIsCloning] = useState(false);
   const [clonedVoices, setClonedVoices] = useState<{id: string, name: string}[]>([]);
   const [fishVoices, setFishVoices] = useState<VoiceModel[]>([]);
+  const [localOnnxModels, setLocalOnnxModels] = useState<{id: string, name: string}[]>([]);
   const [showVoiceSettings, setShowVoiceSettings] = useState(false);
   
   // Preset States
@@ -147,10 +148,11 @@ export const SwindlVX: React.FC = () => {
     if (apiKey) {
       fishAudio.setApiKey(apiKey);
       console.log('[Fish Audio] API key set, loading voices...');
-      fishAudio.listVoices({ selfOnly: true, pageSize: 50 })
+      fishAudio.listVoices({ selfOnly: false, pageSize: 30 })
         .then(response => {
           setFishVoices(response.items);
-          console.log('[Fish Audio] Loaded', response.items.length, 'voices');
+          console.log('[Fish Audio] Loaded', response.items.length, 'public voices');
+          console.log('[Fish Audio] Voice list:', response.items.map(v => v.title).join(', '));
         })
         .catch((err) => {
           console.error('[Fish Audio] Failed to load voices:', err.message);
@@ -645,15 +647,17 @@ export const SwindlVX: React.FC = () => {
                 <SelectTrigger className="bg-black/40 border-white/5 text-[10px] h-10 font-bold shadow-inner">
                   <SelectValue placeholder="Select Model" />
                 </SelectTrigger>
-                <SelectContent className="bg-[#18181B] border-white/10">
+                <SelectContent className="bg-[#18181B] border-white/10 max-h-[400px] overflow-y-auto">
                   <div className="px-2 py-1.5 text-[8px] font-black uppercase text-muted-foreground tracking-widest flex items-center gap-2">
-                    <Sparkles size={10} /> Local ONNX Models
+                    <Sparkles size={10} /> Local Models (.pth / .onnx)
                   </div>
                   <SelectItem value="none">None (Bypass)</SelectItem>
-                  <SelectItem value="singer_m">Pro Singer (Male)</SelectItem>
-                  <SelectItem value="singer_f">Pro Singer (Female)</SelectItem>
-                  <SelectItem value="ethereal">Ethereal Synthetic</SelectItem>
-                  <SelectItem value="vintage">Vintage Tube</SelectItem>
+                  <SelectItem value="21-Savage-american-dream">21 Savage (American Dream)</SelectItem>
+                  <SelectItem value="custom_model_a">Custom Model A (.pth)</SelectItem>
+                  <SelectItem value="custom_model_b">Custom Model B (.pth)</SelectItem>
+                  {localOnnxModels.map(m => (
+                    <SelectItem key={m.id} value={m.id}>{m.name}</SelectItem>
+                  ))}
                   
                   {fishVoices.length > 0 && (
                     <>
@@ -669,18 +673,43 @@ export const SwindlVX: React.FC = () => {
               </Select>
             </div>
 
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-3 gap-2">
               <Button 
-                onClick={handleCloneVoice}
-                disabled={isCloning}
-                className={`h-10 text-[10px] uppercase font-black tracking-widest gap-2 transition-all ${
-                  isRecording 
-                    ? 'bg-red-500 hover:bg-red-600 animate-pulse text-white' 
-                    : 'bg-white/5 hover:bg-white/10 border border-white/10'
-                }`}
+                onClick={() => {
+                  juceBridge.startCapture();
+                  toast.success('Capture armed', {
+                    description: 'Recording input into capture buffer'
+                  });
+                }}
+                className="h-10 text-[10px] uppercase font-black tracking-widest gap-2 bg-white/5 hover:bg-white/10 border border-white/10"
               >
-                {isRecording ? <MicOff size={14} /> : <Mic size={14} className="text-accent" />}
-                {isCloning ? "Cloning..." : isRecording ? "Stop & Clone" : "Clone Voice"}
+                Arm
+              </Button>
+
+              <Button 
+                onClick={() => {
+                  juceBridge.stopCapture();
+                  toast.success('Capture stopped', {
+                    description: 'Saved take to Renders folder'
+                  });
+                }}
+                className="h-10 text-[10px] uppercase font-black tracking-widest gap-2 bg-white/5 hover:bg-white/10 border border-white/10"
+              >
+                Stop
+              </Button>
+
+              <Button 
+                onClick={() => {
+                  juceBridge.convertAudio(voiceModel, pitchShift, formant / 100);
+                  toast.success('Conversion started', {
+                    description: `Model: ${voiceModel}`
+                  });
+                }}
+                disabled={voiceModel === 'none'}
+                className="h-10 text-[10px] uppercase font-black tracking-widest gap-2 bg-accent/20 hover:bg-accent/30 border border-accent/30"
+              >
+                <FileAudio size={14} className="text-accent" />
+                Convert
               </Button>
               
               <Dialog>

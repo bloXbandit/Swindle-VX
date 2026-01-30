@@ -43,6 +43,10 @@ public:
     
     void loadVoiceModel(const std::string& modelId, const std::string& modelType);
 
+    void startCapture();
+    void stopCapture();
+    void convertCapturedAudio(const std::string& modelId, int pitchShift, float formantShift);
+
 private:
     // DSP Modules
     blink::PitchDetector pitchDetector;
@@ -87,7 +91,15 @@ private:
     int pitchRingPos = 0;
     int pitchSamplesFilled = 0;
     int pitchSamplesSinceProcess = 0;
-    
+
+    std::vector<float> captureBuffer;
+    std::atomic<bool> isCapturing { false };
+    int captureWritePos = 0;
+    int captureSamplesRecorded = 0;
+    juce::File lastCapturedFile;
+    std::atomic<bool> captureWriteInProgress { false };
+    juce::WaitableEvent captureWriteFinished;
+
     // Parameter layout
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 

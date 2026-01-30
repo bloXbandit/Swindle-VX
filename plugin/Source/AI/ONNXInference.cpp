@@ -14,7 +14,7 @@
 // 4. Uncomment the #include below:
 
 #ifdef ONNX_RUNTIME_AVAILABLE
-#include <onnxruntime/core/session/onnxruntime_cxx_api.h>
+#include <onnxruntime_cxx_api.h>
 #endif
 
 namespace blink {

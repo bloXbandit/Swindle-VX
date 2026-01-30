@@ -17,7 +17,11 @@ VocalSuiteAudioProcessorEditor::VocalSuiteAudioProcessorEditor(VocalSuiteAudioPr
       webView(juce::WebBrowserComponent::Options()
                 .withResourceProvider([this](const auto& url) { return getResource(url); })
                 .withNativeIntegrationEnabled()
-                .withEventListener("parameterChange", [this](const auto& object) { handleMessage(object); }))
+                .withEventListener("parameterChange", [this](const auto& object) { handleMessage(object); })
+                .withEventListener("loadModel", [this](const auto& object) { handleMessage(object); })
+                .withEventListener("startCapture", [this](const auto& object) { handleMessage(object); })
+                .withEventListener("stopCapture", [this](const auto& object) { handleMessage(object); })
+                .withEventListener("convertAudio", [this](const auto& object) { handleMessage(object); }))
 {
     addAndMakeVisible(webView);
     
@@ -70,6 +74,31 @@ void VocalSuiteAudioProcessorEditor::handleMessage(const juce::var& message)
             auto modelType = obj->getProperty("modelType").toString();
 
             audioProcessor.loadVoiceModel(modelId.toStdString(), modelType.toStdString());
+        }
+        else if (type == "startCapture")
+        {
+            audioProcessor.startCapture();
+        }
+        else if (type == "stopCapture")
+        {
+            audioProcessor.stopCapture();
+        }
+        else if (type == "convertAudio")
+        {
+            if (!obj->hasProperty("model"))
+                return;
+
+            auto model = obj->getProperty("model").toString();
+
+            int pitchShift = 0;
+            float formantShift = 0.0f;
+
+            if (obj->hasProperty("pitchShift"))
+                pitchShift = (int) obj->getProperty("pitchShift");
+            if (obj->hasProperty("formantShift"))
+                formantShift = (float) obj->getProperty("formantShift");
+
+            audioProcessor.convertCapturedAudio(model.toStdString(), pitchShift, formantShift);
         }
     }
 }

@@ -4,6 +4,8 @@
 #include <cmath>
 #include <algorithm>
 
+#include <juce_audio_formats/juce_audio_formats.h>
+
 VocalSuiteAudioProcessor::VocalSuiteAudioProcessor()
     : AudioProcessor(BusesProperties().withInput("Input", juce::AudioChannelSet::mono(), true)
                                      .withOutput("Output", juce::AudioChannelSet::mono(), true)),
@@ -91,6 +93,14 @@ void VocalSuiteAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBl
     workingBuffer.resize(samplesPerBlock * 4); // Extra space for overlap-add
     aiOutputBuffer.resize(samplesPerBlock);
 
+    // Capture up to 2 minutes of mono audio by default
+    const int captureMaxSeconds = 120;
+    const int captureMaxSamples = (int) (sampleRate * (double) captureMaxSeconds);
+    captureBuffer.assign((size_t) captureMaxSamples, 0.0f);
+    captureWritePos = 0;
+    captureSamplesRecorded = 0;
+    isCapturing.store(false);
+
     setLatencySamples(pitchShiftFrameSize - pitchShiftHopSize);
 }
 
@@ -118,6 +128,24 @@ void VocalSuiteAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, ju
     
     auto* channelData = buffer.getWritePointer(0);
     int numSamples = buffer.getNumSamples();
+
+    // Capture input (mono) if armed
+    if (isCapturing.load() && !captureBuffer.empty())
+    {
+        const int capSize = (int) captureBuffer.size();
+        int remaining = capSize - captureWritePos;
+        int toCopy = std::min(numSamples, remaining);
+
+        if (toCopy > 0)
+        {
+            std::copy(channelData, channelData + toCopy, captureBuffer.begin() + captureWritePos);
+            captureWritePos += toCopy;
+            captureSamplesRecorded = std::min(capSize, captureSamplesRecorded + toCopy);
+        }
+
+        if (captureWritePos >= capSize)
+            isCapturing.store(false);
+    }
 
     const int aiProcessSamples = std::min(numSamples, (int) aiOutputBuffer.size());
     
@@ -223,13 +251,9 @@ void VocalSuiteAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, ju
     float resonanceFreq = 2500.0f; // Default resonance frequency (can be made adjustable)
     voiceCharacter.process(channelData, numSamples, breath, resonance, resonanceFreq);
     
-    if (blend > 0.01f && aiProcessor.isLoaded() && aiProcessSamples == numSamples) {
-        aiProcessor.process(channelData, aiOutputBuffer.data(), aiProcessSamples);
-        
-        for (int i = 0; i < aiProcessSamples; i++) {
-            channelData[i] = channelData[i] * (1.0f - blend) + aiOutputBuffer[i] * blend;
-        }
-    }
+    // AI voice conversion is now offline-only (use OfflineVoiceProcessor)
+    // Real-time AI processing would require too much latency
+    // For now, skip AI processing in real-time mode
     
     // 5. SOFT CLIPPING (prevent harsh clipping)
     for (int i = 0; i < numSamples; i++) {
@@ -278,6 +302,188 @@ void VocalSuiteAudioProcessor::loadVoiceModel(const std::string& modelId, const 
     }
     else if (modelType == "fish") {
     }
+}
+
+void VocalSuiteAudioProcessor::startCapture()
+{
+    if (captureBuffer.empty())
+        return;
+
+    captureWritePos = 0;
+    captureSamplesRecorded = 0;
+    lastCapturedFile = juce::File();
+    isCapturing.store(true);
+}
+
+void VocalSuiteAudioProcessor::stopCapture()
+{
+    isCapturing.store(false);
+
+    if (captureSamplesRecorded <= 0 || captureBuffer.empty())
+        return;
+
+    juce::File rendersDir = juce::File::getSpecialLocation(juce::File::userDocumentsDirectory)
+        .getChildFile("VocalSuitePro")
+        .getChildFile("Renders");
+
+    rendersDir.createDirectory();
+
+    const auto timestamp = juce::Time::getCurrentTime().formatted("%Y%m%d_%H%M%S");
+    lastCapturedFile = rendersDir.getChildFile("capture_" + timestamp + ".wav");
+
+    const int samplesToWrite = captureSamplesRecorded;
+    const double sr = currentSampleRate;
+    const std::vector<float> bufferCopy(captureBuffer.begin(), captureBuffer.begin() + samplesToWrite);
+    const juce::File outFileCopy = lastCapturedFile;
+
+    captureWriteInProgress.store(true);
+    captureWriteFinished.reset();
+
+    std::thread([this, bufferCopy, outFileCopy, sr]() {
+        juce::WavAudioFormat wav;
+
+        std::unique_ptr<juce::FileOutputStream> outStream(outFileCopy.createOutputStream());
+        if (outStream == nullptr)
+        {
+            captureWriteInProgress.store(false);
+            captureWriteFinished.signal();
+            return;
+        }
+
+        std::unique_ptr<juce::AudioFormatWriter> writer(
+            wav.createWriterFor(outStream.get(), sr, 1, 16, {}, 0));
+
+        if (writer == nullptr)
+        {
+            captureWriteInProgress.store(false);
+            captureWriteFinished.signal();
+            return;
+        }
+
+        outStream.release();
+
+        juce::AudioBuffer<float> tmp(1, (int) bufferCopy.size());
+        tmp.copyFrom(0, 0, bufferCopy.data(), (int) bufferCopy.size());
+        writer->writeFromAudioSampleBuffer(tmp, 0, tmp.getNumSamples());
+
+        captureWriteInProgress.store(false);
+        captureWriteFinished.signal();
+    }).detach();
+}
+
+void VocalSuiteAudioProcessor::convertCapturedAudio(const std::string& modelId, int pitchShift, float formantShift)
+{
+    if (isCapturing.load())
+        stopCapture();
+
+    if (captureWriteInProgress.load())
+        captureWriteFinished.wait(5000);
+
+    if (!lastCapturedFile.existsAsFile())
+    {
+        DBG("[SwindleVX] convertCapturedAudio: no capture file available");
+        return;
+    }
+
+    juce::File modelsDir = juce::File::getSpecialLocation(juce::File::userDocumentsDirectory)
+        .getChildFile("VocalSuitePro")
+        .getChildFile("Models");
+
+    juce::File modelFile;
+    {
+        const juce::File candidate(modelId);
+        if (candidate.existsAsFile())
+            modelFile = candidate;
+        else
+        {
+            modelFile = modelsDir.getChildFile(modelId);
+            if (!modelFile.existsAsFile())
+                modelFile = modelsDir.getChildFile(modelId + ".pth");
+        }
+    }
+
+    if (!modelFile.existsAsFile())
+    {
+        DBG("[SwindleVX] convertCapturedAudio: model not found: " + modelFile.getFullPathName());
+        return;
+    }
+
+    juce::File rendersDir = juce::File::getSpecialLocation(juce::File::userDocumentsDirectory)
+        .getChildFile("VocalSuitePro")
+        .getChildFile("Renders");
+    rendersDir.createDirectory();
+
+    const auto timestamp = juce::Time::getCurrentTime().formatted("%Y%m%d_%H%M%S");
+    const auto safeModel = juce::File::createLegalFileName(modelFile.getFileNameWithoutExtension());
+    const juce::File outFile = rendersDir.getChildFile("converted_" + safeModel + "_" + timestamp + ".wav");
+
+    const juce::File inputFile = lastCapturedFile;
+    const juce::File modelFileCopy = modelFile;
+    const int pitchShiftCopy = pitchShift;
+    const float formantShiftCopy = formantShift;
+
+    // Use the lightweight WORLD-based converter by default.
+    const juce::File scriptFile = juce::File::getSpecialLocation(juce::File::userDocumentsDirectory)
+        .getChildFile("VocalSuitePro")
+        .getChildFile("RVC")
+        .getChildFile("voice_convert.py");
+
+    if (!scriptFile.existsAsFile())
+    {
+        DBG("[SwindleVX] convertCapturedAudio: backend script not found: " + scriptFile.getFullPathName());
+        return;
+    }
+
+    std::thread([inputFile, outFile, modelFileCopy, scriptFile, pitchShiftCopy, formantShiftCopy]() {
+        DBG("[SwindleVX] Converting captured audio via Python backend...");
+
+        const juce::String args = " run -n rvc310 python "
+            + scriptFile.getFullPathName().quoted()
+            + " " + inputFile.getFullPathName().quoted()
+            + " " + outFile.getFullPathName().quoted()
+            + " --model " + modelFileCopy.getFullPathName().quoted()
+            + " --pitch " + juce::String(pitchShiftCopy)
+            + " --formant " + juce::String(formantShiftCopy);
+
+        const juce::File home = juce::File::getSpecialLocation(juce::File::userHomeDirectory);
+        const std::vector<juce::String> condaCandidates = {
+            "conda",
+            (home.getChildFile("miniconda3/bin/conda").getFullPathName()),
+            (home.getChildFile("mambaforge/bin/conda").getFullPathName()),
+            "/opt/homebrew/Caskroom/miniconda/base/bin/conda",
+            "/usr/local/Caskroom/miniconda/base/bin/conda",
+            "/opt/homebrew/bin/conda",
+            "/usr/local/bin/conda"
+        };
+
+        juce::ChildProcess proc;
+        bool started = false;
+        for (const auto& condaPath : condaCandidates)
+        {
+            const juce::String cmd = condaPath.quoted() + args;
+            if (proc.start(cmd))
+            {
+                started = true;
+                break;
+            }
+        }
+
+        if (!started)
+        {
+            DBG("[SwindleVX] Failed to start backend process (conda not found on PATH?)");
+            return;
+        }
+
+        proc.waitForProcessToFinish(-1);
+        const auto outText = proc.readAllProcessOutput();
+        if (outText.isNotEmpty())
+            DBG("[SwindleVX] Backend output: " + outText);
+
+        if (outFile.existsAsFile())
+            DBG("[SwindleVX] Converted file saved: " + outFile.getFullPathName());
+        else
+            DBG("[SwindleVX] Backend finished but output file missing: " + outFile.getFullPathName());
+    }).detach();
 }
 
 // JUCE Entry point

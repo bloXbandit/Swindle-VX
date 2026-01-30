@@ -63,8 +63,8 @@ target_compile_definitions(VocalSuitePro
     JUCE_USE_CURL=1
     JUCE_VST3_CAN_REPLACE_VST2=0
     
-    # Uncomment when ONNX Runtime is available
-    # ONNX_RUNTIME_AVAILABLE=1
+    # ONNX Runtime enabled
+    ONNX_RUNTIME_AVAILABLE=1
 )
 
 target_link_libraries(VocalSuitePro
@@ -74,8 +74,8 @@ target_link_libraries(VocalSuitePro
     juce::juce_gui_extra
     juce::juce_dsp
     
-    # Uncomment and set path when ONNX Runtime is available
-    # /path/to/onnxruntime/lib/libonnxruntime.dylib
+    # ONNX Runtime library
+    $ENV{HOME}/onnxruntime/lib/libonnxruntime.1.17.0.dylib
 )
 
 set(WEBUI_DIST_DIR "${CMAKE_CURRENT_LIST_DIR}/../dist")
@@ -95,10 +95,10 @@ else()
     target_compile_definitions(VocalSuitePro PRIVATE VOCALSUITE_EMBED_UI=0)
 endif()
 
-# Uncomment when ONNX Runtime is available
-# target_include_directories(VocalSuitePro
-#     PRIVATE
-#     /path/to/onnxruntime/include
-# )
+# ONNX Runtime include directory
+target_include_directories(VocalSuitePro
+    PRIVATE
+    $ENV{HOME}/onnxruntime/include
+)
 
 juce_generate_juce_header(VocalSuitePro)
